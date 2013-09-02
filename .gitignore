@@ -1,0 +1,9 @@
+*.pyc
+*.img
+*.xml
+utils/*.pyc
+tests/*.pyc
+tests/test_instance/*
+demoscripts/*.pyc
+*.swp
+.ropeproject/*

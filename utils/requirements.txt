@@ -1,0 +1,5 @@
+libvirt
+sqlalchemy
+pymongo
+gridfs
+mock
