@@ -8,6 +8,11 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.schema import Table
 
+#following exceptions is using in tests
+from sqlalchemy.orm.exc import (
+    NoResultFound, MultipleResultsFound
+)
+
 import pymongo
 import gridfs
 from bson.objectid import ObjectId
