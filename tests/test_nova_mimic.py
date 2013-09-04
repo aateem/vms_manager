@@ -3,6 +3,7 @@
 
 import os
 import os.path
+import shutil
 import unittest
 import xml.etree.ElementTree as ElementTree
 
@@ -16,8 +17,15 @@ from src.database_toolkit import (
     MultipleResultsFound
 )
 
-#directory where data (i.e. xml config and image) will be stored
+#directory where images will be stored
 PATH_TO_TEST_PROJECTS_DIR = os.path.abspath(os.path.dirname(__file__))
+#path to config which store global setting for system
+PATH_TO_GLOBAL_CONFIG = os.path.join(
+    os.path.split(
+        PATH_TO_TEST_PROJECTS_DIR
+    )[0],
+    'config.ini'
+)
 
 
 #just for remembering exception handling
@@ -25,77 +33,68 @@ class MyException(Exception):
     pass
 
 
-@patch('src.nova_mimic.PROJECTS_PATH', PATH_TO_TEST_PROJECTS_DIR)
 class TestNovaMimicBootMethod(unittest.TestCase):
     def setUp(self):
-        self.libvirt_conn = libvirt.open("qemu:///system")
-        self.nova_mimic_instance = src.nova_mimic.NovaMimic()
-
-        #creating project subdir
-        self.project_name = 'test_instance'
-        self.project_subdir_path = os.path.join(
+        self.path_to_image_storage = os.path.join(
             PATH_TO_TEST_PROJECTS_DIR,
-            self.project_name
+            'image_storage'
         )
+        os.mkdir(self.path_to_image_storage)
+
+        self.libvirt_conn = libvirt.open("qemu:///system")
+
+        with patch(
+            'src.nova_mimic.PATH_TO_GLOBAL_CONFIG',
+            PATH_TO_GLOBAL_CONFIG
+        ):
+            self.nova_mimic_instance = src.nova_mimic.NovaMimic()
 
     def tearDown(self):
         '''
-        Removes test project. This action consists in
-        removing project subdir.
+        Destroys all domains which were
+        started.
 
         Closes connectin to libvirt driver.
+
+        Removes test image storage directory
+        with all contents (i.e. image files)
         '''
-        if os.path.exists(self.project_subdir_path):
-            os.rmdir(self.project_subdir_path)
+
+        for domain in self.nova_mimic_instance.domains_pool.values():
+            domain.destroy()
 
         self.libvirt_conn.close()
 
-    def test_manage_project_path(self):
-        self.nova_mimic_instance._manage_project_path(self.project_name)
-
-        self.assertEqual(
-            self.nova_mimic_instance.current_project_path,
-            self.project_subdir_path
-        )
+        #remove test image storage directory with all content
+        if os.path.exists(self.path_to_image_storage):
+            shutil.rmtree(self.path_to_image_storage)
 
     def test_xml_processing(self):
         '''
-        Checks whether xml config for instance is created (exists in
-        test directory) and has proper values in needed sections.
+        Checks if string that is produced
+        by _xml_processing method is correct
+        (i.e. needed attributes have proper values)
         '''
         fixture_data = {
             'args':
             {
-                'instance_name': self.project_name,
-                'image_name': 'ubuntu12.04server',
+                'instance_name': 'test_instance',
+                'image_id': '522700a8a063d875c192d818',
                 'memory': 524288,
                 'vcpu': 1,
                 'mac_address': '52:54:00:83:df:a1'
             },
-            'image_id': 1,
             'flavor_id': 1
         }
 
-        if not os.path.exists(self.project_subdir_path):
-            os.mkdir(self.project_subdir_path)
-
-        with patch.object(self.nova_mimic_instance, 'current_project_path', self.project_subdir_path, create=True):
-            produced_path = self.nova_mimic_instance._xml_processing(
+        with patch.object(
+            self.nova_mimic_instance,
+            'path_to_image_storage',
+            self.path_to_image_storage
+        ):
+            xml_conf_string = self.nova_mimic_instance._xml_processing(
                 **fixture_data['args']
             )
-
-        # check whether xml config for instance was created
-        path_to_xml_config = os.path.join(
-            self.project_subdir_path,
-            '{0}.xml'.format(fixture_data['args']['instance_name'])
-        )
-
-        self.assertTrue(
-            os.path.exists(path_to_xml_config)
-        )
-
-        #check that produced path is equal to real path
-        self.assertEqual(produced_path, path_to_xml_config)
 
         # query data from db to compare against corresponding values in config
         with contexted_session() as s:
@@ -104,12 +103,11 @@ class TestNovaMimicBootMethod(unittest.TestCase):
                       .one()
 
             image = s.query(Image)\
-                     .filter(Image.id == fixture_data['image_id'])\
+                     .filter(Image.id == fixture_data['args']['image_id'])\
                      .one()
 
-            # parse xml config
-            config = ElementTree.parse(path_to_xml_config)
-            conf_root = config.getroot()
+            # parse xml config from string
+            conf_root = ElementTree.fromstring(xml_conf_string)
 
             # check consistency
             name = conf_root.find("name")
@@ -128,8 +126,8 @@ class TestNovaMimicBootMethod(unittest.TestCase):
             for disk in devices.findall("disk"):
                 if disk.get("type") == "file":
                     path_to_image = os.path.join(
-                        self.project_subdir_path,
-                        "{0}.img".format(fixture_data['args']['image_name'])
+                        self.path_to_image_storage,
+                        fixture_data['args']['image_id']
                     )
 
                     self.assertEqual(
@@ -137,50 +135,37 @@ class TestNovaMimicBootMethod(unittest.TestCase):
                         path_to_image
                     )
 
-        #cleaning
-        if os.path.exists(path_to_xml_config):
-            os.remove(path_to_xml_config)
-
     def test_image_processing(self):
         '''
-        Checks whether image file is present in test projects subdir.
+        Checks whether image file is present in
+        test image storage directory
         '''
         fixture_data = {
-            'image_name': 'ubuntu12.04server',
-            'storage_key': '52247faca063d808024e5f96'
+            'image_id': '522700a8a063d875c192d818'
         }
 
-        #hence _image_processing method is tested in isolation
-        #we must mock behaviour of all code which it depends on
-
-        #here we create needed directory on filesystem
-        if not os.path.exists(self.project_subdir_path):
-            os.mkdir(self.project_subdir_path)
-
-        #here we created mocked attribute for nova_mimic_instance
-        #which is supplied by another method of instance but must be available
-        #in this test
-        with patch.object(self.nova_mimic_instance, 'current_project_path', self.project_subdir_path, create=True):
+        with patch.object(
+            self.nova_mimic_instance,
+            'path_to_image_storage',
+            self.path_to_image_storage
+        ):
             self.nova_mimic_instance._image_processing(**fixture_data)
 
         # check whether image was supplied for the project
         path_to_image = os.path.join(
-            self.project_subdir_path,
-            "{0}.img".format(fixture_data['image_name'])
+            self.path_to_image_storage,
+            fixture_data['image_id']
         )
 
         self.assertTrue(
             os.path.exists(path_to_image)
         )
 
-        #cleaning
-        if os.path.exists(path_to_image):
-            os.remove(path_to_image)
-
     def test_vm_boot(self):
         '''
-        Checks whether xml config for domain was
-        defined properly.
+        Models full process of booting vm, i.e.:
+        creation of xml, downloading image from key-value
+        storage, booting domain.
 
         Checks whether vm is booted by getting connection
         to proper libvirt driver and performing lookup by
@@ -193,12 +178,16 @@ class TestNovaMimicBootMethod(unittest.TestCase):
         '''
 
         fixture_data = {
-            'instance_name': self.project_name,
-            'image_id': 1,
+            'instance_name': 'test_instance',
+            'image_id': '522700a8a063d875c192d818',
             'flavor_id': 1
         }
 
-        with patch.dict(self.nova_mimic_instance.domains_pool):
+        with patch.object(
+            self.nova_mimic_instance,
+            'path_to_image_storage',
+            self.path_to_image_storage
+        ):
             self.nova_mimic_instance.instance_boot(**fixture_data)
 
             #check if xml config was properly defined
@@ -227,11 +216,11 @@ class TestNovaMimicBootMethod(unittest.TestCase):
                 #just for the sake of refreshing knowleges
                 try:
                     instance = s.query(Instance)\
-                                .filter(Instance.id == domain.UUIDString())\
+                                .filter_by(id=domain.UUIDString())\
                                 .one()
                 except (NoResultFound, MultipleResultsFound):
                     raise MyException(
-                        "There should be only one entry in data base for instance"
+                        "More then one entry for instance was found"
                     )
                 finally:
                     #cleaning up
