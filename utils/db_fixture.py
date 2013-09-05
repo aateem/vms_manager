@@ -12,13 +12,13 @@ key-value storage.
 
 Main convinience of this module is that it can provide initial data set
 not only for production database but also fixture data for test database
-since initial state of mentioned is same as that in prodaction db.
+since initial state of mentioned is same as that in production db.
 
-This process (processing production db or test db data) is controlled by
-argument for dump_data function. This arg has default value set to devel
-deployment argument for production depoyment. If this code is using for
-depoying test database function dump_data is called with deployment_arg
-set to testing.
+It is done by using function dump_data with session object (created
+for needed database) passed as argument.
+
+Unfortunately unified function functionality is not complete for
+'testing' database.
 '''
 
 import sys
@@ -35,6 +35,8 @@ from sqlalchemy import (
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 
+connection_string = 'mysql+mysqldb://devel:devel@localhost/devel?charset=utf8'
+engine = create_engine(connection_string)
 Base = declarative_base()
 
 
@@ -74,11 +76,11 @@ class Instance(Base):
     mac_addr = Column(Integer, ForeignKey('mac_address_pool.id'))
 
 
-def dump_data(deployment_arg='devel'):
-    #create proper accredetation for database
-    connection_string = 'mysql+mysqldb://{0}:{0}@localhost/{0}?charset=utf8'.format(deployment_arg)
-    engine = create_engine(connection_string)
+def dump_data():
+    pass
 
+
+if __name__ == '__main__':
     #get instance of Database object via proxy mongo client object
     #(which is listening on localhost
     #and 27017 port). This db object will be passed to GridFS instance which
@@ -88,11 +90,10 @@ def dump_data(deployment_arg='devel'):
     #if there exists any data. Only after that one can upload image to gridfs.
     with pymongo.MongoClient() as client:
         #test presence of databases
-        if deployment_arg == 'devel':
-            if deployment_arg in client.database_names():
-                client.drop_database(deployment_arg)
+        if 'devel' in client.database_names():
+            client.drop_database('devel')
 
-        db = client[deployment_arg]
+        db = client['devel']
         grfs = gridfs.GridFS(db)
 
         # path to image which will be uploaded to mongo storage.
@@ -114,11 +115,13 @@ def dump_data(deployment_arg='devel'):
     #schema with filling it with needed values.
 
     #TODO: make test of schema existing more sophisticated
-    if deployment_arg == 'devel':
-        if any([engine.has_table(key) for key in Base.metadata.tables.keys()]):
-            Base.metadata.drop_all(engine)
+    if any([engine.has_table(key) for key in Base.metadata.tables.keys()]):
+        Base.metadata.drop_all(engine)
 
     Base.metadata.create_all(engine)
+
+    Session = sessionmaker(bind=engine)
+    s = Session()
 
     flavors = []
     flavors.append(Flavors(name="standart", vcpu=1, memory=524288))
@@ -142,10 +145,6 @@ def dump_data(deployment_arg='devel'):
     mac_addresses.append(MacAddressPool(address="52:54:00:83:df:a3", is_free=True))
     mac_addresses.append(MacAddressPool(address="52:54:00:83:df:a4", is_free=True))
 
-    # Put objects into session and flush to database
-    Session = sessionmaker(bind=engine)
-    s = Session()
-
     s.add_all(flavors)
     s.add_all(mac_addresses)
     s.add_all(images)
@@ -154,4 +153,5 @@ def dump_data(deployment_arg='devel'):
     s.commit()
     s.close()
 
-    #engine must be returne
+    #stub for future use
+    dump_data()

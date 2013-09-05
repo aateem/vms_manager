@@ -1,5 +1,16 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
+'''
+Provides data mapping of entities from
+database to python classes. Schema is
+autoloaded.(Different approach of this functionality
+may be done considering using defined classes
+from src.utils.db_fixture module as soon
+as they declare schema explicitly)
+
+Also provides toolkit to using session objects
+inside of with context manager.
+'''
 
 from contextlib import contextmanager
 
